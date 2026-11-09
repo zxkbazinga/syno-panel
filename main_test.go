@@ -33,12 +33,35 @@ func TestReadMemory(t *testing.T) {
 }
 
 func TestParseMounts(t *testing.T) {
-	got := parseMounts("/dev/md0 /volume1 btrfs rw 0 0\n/dev/sda1 /volume\\040USB1/usbshare ext4 rw 0 0\ntmpfs /run tmpfs rw 0 0\n/dev/md0 /volume1 btrfs rw 0 0\n")
+	got := parseMounts("/dev/md0 /volume1 btrfs rw 0 0\n/dev/md1 /volume2 ext4 rw 0 0\n/dev/sda1 /volumeUSB1/usbshare ext4 rw 0 0\n/dev/loop0 /volume2/@docker/btrfs/subvolumes/abc btrfs rw 0 0\ntmpfs /run tmpfs rw 0 0\n/dev/md0 /volume1 btrfs rw 0 0\n")
 	want := []mountInfo{
 		{device: "/dev/md0", mount: "/volume1", fsType: "btrfs"},
-		{device: "/dev/sda1", mount: "/volume USB1/usbshare", fsType: "ext4"},
+		{device: "/dev/md1", mount: "/volume2", fsType: "ext4"},
+		{device: "/dev/sda1", mount: "/volumeUSB1/usbshare", fsType: "ext4"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseMounts() = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsNASVolumeMount(t *testing.T) {
+	tests := []struct {
+		mount string
+		want  bool
+	}{
+		{"/volume1", true},
+		{"/volume12", true},
+		{"/volume2/@docker", false},
+		{"/volume2/@appdata/ContainerManager", false},
+		{"/volumeUSB1/usbshare", true},
+		{"/volumeUSB1/usbshare2", true},
+		{"/volumeUSB1", false},
+		{"/volume", false},
+		{"/", false},
+	}
+	for _, test := range tests {
+		if got := isNASVolumeMount(test.mount); got != test.want {
+			t.Errorf("isNASVolumeMount(%q) = %t, want %t", test.mount, got, test.want)
+		}
 	}
 }

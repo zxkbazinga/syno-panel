@@ -357,6 +357,9 @@ func parseMounts(data string) []mountInfo {
 			continue
 		}
 		mount := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\134`, `\`).Replace(fields[1])
+		if !isNASVolumeMount(mount) {
+			continue
+		}
 		if seen[mount] {
 			continue
 		}
@@ -364,6 +367,28 @@ func parseMounts(data string) []mountInfo {
 		mounts = append(mounts, mountInfo{device: fields[0], mount: mount, fsType: fields[2]})
 	}
 	return mounts
+}
+
+func isNASVolumeMount(mount string) bool {
+	if !strings.HasPrefix(mount, "/volume") {
+		return false
+	}
+	parts := strings.Split(strings.Trim(mount, "/"), "/")
+	if len(parts) == 1 {
+		name := strings.TrimPrefix(parts[0], "volume")
+		if name == "" {
+			return false
+		}
+		for _, char := range name {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return len(parts) == 2 &&
+		strings.HasPrefix(parts[0], "volumeUSB") &&
+		strings.HasPrefix(parts[1], "usbshare")
 }
 
 func (c *Collector) readContainers(ctx context.Context) ([]Container, error) {

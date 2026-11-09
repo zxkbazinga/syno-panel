@@ -12,7 +12,8 @@ services:
       HOST_PROC: /host/proc
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/host:ro
+      - /volume1:/host/volume1:ro
+      - /volume2:/host/volume2:ro
       - /proc:/host/proc:ro
     read_only: true
     tmpfs:
