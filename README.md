@@ -29,7 +29,7 @@ docker compose -f compose.image.yaml up -d
 - 存储卷：宿主机挂载表和只读宿主机根目录，展示 ext4、Btrfs、XFS、NTFS、exFAT、VFAT 文件系统。
 - Docker 容器：Docker Engine API，包括 CPU、内存、网络 I/O 和磁盘 I/O。
 
-Compose 配置将宿主机根目录和 Docker Socket 以只读方式挂入容器。若群晖的 Docker Socket 不在 `/var/run/docker.sock`，可在 `compose.yaml` 中同时修改 Socket 映射和 `DOCKER_SOCKET`。
+Compose 配置将宿主机根目录和 Docker Socket 以只读方式挂入容器。若群晖的 Docker Socket 不在 `/var/run/docker.sock`，可在对应的 Compose 文件中同时修改 Socket 映射和 `DOCKER_SOCKET`。
 
 ## 安全提示
 

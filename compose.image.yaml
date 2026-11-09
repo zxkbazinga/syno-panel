@@ -12,7 +12,7 @@ services:
       HOST_PROC: /host/proc
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /:/host:ro,rslave
+      - /:/host:ro
       - /proc:/host/proc:ro
     read_only: true
     tmpfs:
