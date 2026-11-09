@@ -44,6 +44,17 @@ func TestParseMounts(t *testing.T) {
 	}
 }
 
+func TestParseMountsWithContainerBindPaths(t *testing.T) {
+	got := parseMountsForRoot("/dev/md0 /host/volume1 btrfs rw 0 0\n/dev/md1 /host/volume2 ext4 rw 0 0\n/dev/loop0 /host/volume2/@docker/btrfs/subvolumes/abc btrfs rw 0 0\n", "/host")
+	want := []mountInfo{
+		{device: "/dev/md0", mount: "/volume1", fsType: "btrfs"},
+		{device: "/dev/md1", mount: "/volume2", fsType: "ext4"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseMounts() = %#v, want %#v", got, want)
+	}
+}
+
 func TestIsNASVolumeMount(t *testing.T) {
 	tests := []struct {
 		mount string

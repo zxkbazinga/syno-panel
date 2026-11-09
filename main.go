@@ -317,11 +317,11 @@ func (c *Collector) readDisks() ([]Disk, []string) {
 	if err != nil {
 		return []Disk{}, []string{"无法读取 NAS 磁盘挂载信息: " + err.Error()}
 	}
-	mounts := parseMounts(string(data))
+	mounts := parseMountsForRoot(string(data), c.hostRoot)
 	disks := make([]Disk, 0, len(mounts))
 	var warnings []string
 	for _, mount := range mounts {
-		path := c.hostRoot + mount.mount
+		path := strings.TrimRight(c.hostRoot, "/") + mount.mount
 		var stat syscall.Statfs_t
 		if err := syscall.Statfs(path, &stat); err != nil {
 			warnings = append(warnings, fmt.Sprintf("无法读取存储空间 %s: %v", mount.mount, err))
@@ -348,6 +348,10 @@ func (c *Collector) readDisks() ([]Disk, []string) {
 }
 
 func parseMounts(data string) []mountInfo {
+	return parseMountsForRoot(data, "")
+}
+
+func parseMountsForRoot(data, hostRoot string) []mountInfo {
 	allowed := map[string]bool{"ext4": true, "btrfs": true, "xfs": true, "vfat": true, "exfat": true, "ntfs": true, "fuseblk": true}
 	seen := make(map[string]bool)
 	var mounts []mountInfo
@@ -357,6 +361,10 @@ func parseMounts(data string) []mountInfo {
 			continue
 		}
 		mount := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\134`, `\`).Replace(fields[1])
+		root := strings.TrimRight(hostRoot, "/")
+		if root != "" && strings.HasPrefix(mount, root+"/") {
+			mount = strings.TrimPrefix(mount, root)
+		}
 		if !isNASVolumeMount(mount) {
 			continue
 		}
