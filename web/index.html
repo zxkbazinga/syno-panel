@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090b13">
+    <title>NAS 面板</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="NAS 面板首页">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><rect x="4" y="5" width="24" height="9" rx="3"/><rect x="4" y="18" width="24" height="9" rx="3"/><circle cx="9" cy="9.5" r="1"/><circle cx="9" cy="22.5" r="1"/><path d="M14 9.5h9M14 22.5h9"/></svg>
+          </span>
+          <span class="brand-copy"><strong>home<span>base</span></strong><small>SYNOLOGY MONITOR</small></span>
+        </a>
+        <div class="topbar-right">
+          <span class="host-label"><span class="host-dot"></span><span id="hostname">正在连接 NAS</span></span>
+          <span class="connection-pill" id="connection"><i></i><span>连接中</span></span>
+        </div>
+      </header>
+
+      <main>
+        <section class="intro">
+          <div>
+            <p class="eyebrow"><span class="eyebrow-line"></span>YOUR HOME SERVER, AT A GLANCE</p>
+            <h1>一切运行如常<span class="title-period">.</span></h1>
+            <p class="intro-copy">NAS 资源与 Docker 容器实时状态</p>
+          </div>
+          <div class="updated">
+            <span class="live-indicator"><i></i> LIVE</span>
+            <span id="last-updated">等待第一条数据</span>
+          </div>
+        </section>
+
+        <section class="overview-grid" aria-label="主机资源概览">
+          <article class="overview-card cpu-card">
+            <div class="card-heading"><span class="heading-icon cpu-icon">⌁</span><span>处理器</span><span class="card-label">CPU</span></div>
+            <div class="resource-row">
+              <div><strong class="metric-value" id="cpu-value">—<small>%</small></strong><p>当前使用率</p></div>
+              <div class="ring" id="cpu-ring" style="--progress:0"><div><span id="cpu-ring-value">—</span><small>CPU</small></div></div>
+            </div>
+            <div class="card-foot"><span>整体负载</span><span class="foot-value" id="cpu-status">等待数据</span></div>
+          </article>
+
+          <article class="overview-card memory-card">
+            <div class="card-heading"><span class="heading-icon memory-icon">▤</span><span>内存</span><span class="card-label">MEMORY</span></div>
+            <div class="resource-row">
+              <div><strong class="metric-value" id="memory-value">—<small>%</small></strong><p id="memory-detail">— / —</p></div>
+              <div class="ring memory-ring" id="memory-ring" style="--progress:0"><div><span id="memory-ring-value">—</span><small>RAM</small></div></div>
+            </div>
+            <div class="card-foot"><span>已用 / 总量</span><span class="foot-value" id="memory-status">等待数据</span></div>
+          </article>
+
+          <article class="overview-card containers-card">
+            <div class="card-heading"><span class="heading-icon container-icon">◫</span><span>容器</span><span class="card-label">DOCKER</span></div>
+            <div class="container-count-row"><strong class="metric-value" id="container-count">—<small> 个</small></strong><span class="container-cube" aria-hidden="true">▦</span></div>
+            <p class="container-summary" id="container-summary">等待 Docker 数据</p>
+            <div class="card-foot"><span>运行中</span><span class="foot-value" id="running-count">—</span></div>
+          </article>
+        </section>
+
+        <section class="section-block storage-section">
+          <div class="section-heading">
+            <div><p class="section-kicker">STORAGE</p><h2>存储空间</h2></div>
+            <span class="section-count" id="disk-count">0 个卷</span>
+          </div>
+          <div class="disk-grid" id="disk-list">
+            <div class="empty-state"><span class="empty-icon">◌</span><span>正在读取存储空间…</span></div>
+          </div>
+        </section>
+
+        <section class="section-block docker-section">
+          <div class="section-heading">
+            <div><p class="section-kicker">CONTAINER ACTIVITY</p><h2>容器资源</h2></div>
+            <span class="section-count"><span class="tiny-pulse"></span> 每 2 秒更新</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>容器</th><th>状态</th><th>CPU</th><th>内存</th><th>网络 I/O</th><th>磁盘 I/O</th></tr></thead>
+              <tbody id="container-list">
+                <tr><td colspan="6"><div class="empty-state"><span class="empty-icon">◌</span><span>正在连接 Docker…</span></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="mobile-container-list" id="mobile-container-list"></div>
+        </section>
+
+        <aside class="warning-banner" id="warning-banner" hidden>
+          <span class="warning-mark">!</span>
+          <div><strong>部分数据暂不可用</strong><ul id="warning-list"></ul></div>
+        </aside>
+      </main>
+
+      <footer><span>HOMEBASE <i>·</i> NAS MONITOR</span><span>数据仅在你的局域网内展示</span></footer>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

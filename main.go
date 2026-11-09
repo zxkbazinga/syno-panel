@@ -1,0 +1,587 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+//go:embed web/*
+var webFiles embed.FS
+
+const collectionInterval = 2 * time.Second
+
+type Snapshot struct {
+	Timestamp  time.Time   `json:"timestamp"`
+	Hostname   string      `json:"hostname"`
+	CPU        Metric      `json:"cpu"`
+	Memory     Memory      `json:"memory"`
+	Disks      []Disk      `json:"disks"`
+	Containers []Container `json:"containers"`
+	Warnings   []string    `json:"warnings"`
+}
+
+type Metric struct {
+	UsedPercent float64 `json:"usedPercent"`
+}
+
+type Memory struct {
+	UsedBytes   uint64  `json:"usedBytes"`
+	TotalBytes  uint64  `json:"totalBytes"`
+	UsedPercent float64 `json:"usedPercent"`
+}
+
+type Disk struct {
+	Name        string  `json:"name"`
+	Mount       string  `json:"mount"`
+	FileSystem  string  `json:"fileSystem"`
+	UsedBytes   uint64  `json:"usedBytes"`
+	TotalBytes  uint64  `json:"totalBytes"`
+	UsedPercent float64 `json:"usedPercent"`
+}
+
+type Container struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	Image         string  `json:"image"`
+	Status        string  `json:"status"`
+	CPUPercent    float64 `json:"cpuPercent"`
+	MemoryBytes   uint64  `json:"memoryBytes"`
+	MemoryLimit   uint64  `json:"memoryLimit"`
+	MemoryPercent float64 `json:"memoryPercent"`
+	NetworkBytes  uint64  `json:"networkBytes"`
+	BlockBytes    uint64  `json:"blockBytes"`
+}
+
+type Collector struct {
+	docker       *http.Client
+	hostRoot     string
+	hostProc     string
+	previousCPU  uint64
+	previousIdle uint64
+	hasCPU       bool
+}
+
+type hub struct {
+	mu          sync.Mutex
+	latest      Snapshot
+	subscribers map[chan Snapshot]struct{}
+}
+
+type mountInfo struct {
+	device string
+	mount  string
+	fsType string
+}
+
+type dockerContainer struct {
+	ID     string   `json:"Id"`
+	Names  []string `json:"Names"`
+	Image  string   `json:"Image"`
+	State  string   `json:"State"`
+	Status string   `json:"Status"`
+}
+
+type dockerStats struct {
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
+		} `json:"cpu_usage"`
+		SystemUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs  uint32 `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64 `json:"usage"`
+		Limit uint64 `json:"limit"`
+		Stats struct {
+			Cache        uint64 `json:"cache"`
+			InactiveFile uint64 `json:"inactive_file"`
+		} `json:"stats"`
+	} `json:"memory_stats"`
+	Networks map[string]struct {
+		RxBytes uint64 `json:"rx_bytes"`
+		TxBytes uint64 `json:"tx_bytes"`
+	} `json:"networks"`
+	BlkioStats struct {
+		IOServicedRecursive []struct {
+			Op    string `json:"op"`
+			Value uint64 `json:"value"`
+		} `json:"io_service_bytes_recursive"`
+	} `json:"blkio_stats"`
+}
+
+func main() {
+	socket := envOr("DOCKER_SOCKET", "/var/run/docker.sock")
+	hostRoot := envOr("HOST_ROOT", "/host")
+	hostProc := envOr("HOST_PROC", "/host/proc")
+	port := envOr("PORT", "5666")
+
+	dockerTransport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "unix", socket)
+		},
+	}
+	collector := &Collector{
+		docker:   &http.Client{Transport: dockerTransport, Timeout: 5 * time.Second},
+		hostRoot: hostRoot,
+		hostProc: hostProc,
+	}
+	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go collector.run(ctx, stream)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/events", stream.serveSSE)
+	webRoot, err := fs.Sub(webFiles, "web")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/", http.FileServer(http.FS(webRoot)))
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           securityHeaders(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+
+	log.Printf("NAS panel listening on :%s", port)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+}
+
+func (c *Collector) run(ctx context.Context, stream *hub) {
+	ticker := time.NewTicker(collectionInterval)
+	defer ticker.Stop()
+	for {
+		snapshot := c.collect(ctx)
+		stream.publish(snapshot)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *Collector) collect(ctx context.Context) Snapshot {
+	now := time.Now()
+	hostnameData, _ := os.ReadFile(c.hostRoot + "/etc/hostname")
+	host := strings.TrimSpace(string(hostnameData))
+	if host == "" {
+		host, _ = os.Hostname()
+	}
+	if host == "" {
+		host = "Synology NAS"
+	}
+	snapshot := Snapshot{
+		Timestamp:  now,
+		Hostname:   host,
+		Disks:      []Disk{},
+		Containers: []Container{},
+		Warnings:   []string{},
+	}
+	if cpu, err := c.readCPU(); err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "无法读取 NAS CPU 信息: "+err.Error())
+	} else {
+		snapshot.CPU = cpu
+	}
+	if memory, err := readMemory(c.hostProc + "/meminfo"); err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "无法读取 NAS 内存信息: "+err.Error())
+	} else {
+		snapshot.Memory = memory
+	}
+	disks, diskWarnings := c.readDisks()
+	snapshot.Disks = disks
+	snapshot.Warnings = append(snapshot.Warnings, diskWarnings...)
+	containers, err := c.readContainers(ctx)
+	if err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "无法读取 Docker 容器: "+err.Error())
+	} else {
+		snapshot.Containers = containers
+	}
+	return snapshot
+}
+
+func (c *Collector) readCPU() (Metric, error) {
+	data, err := os.ReadFile(c.hostProc + "/stat")
+	if err != nil {
+		return Metric{}, err
+	}
+	total, idle, err := parseCPUStat(string(data))
+	if err != nil {
+		return Metric{}, err
+	}
+	if !c.hasCPU {
+		c.previousCPU, c.previousIdle, c.hasCPU = total, idle, true
+		return Metric{}, nil
+	}
+	totalDelta, idleDelta := total-c.previousCPU, idle-c.previousIdle
+	c.previousCPU, c.previousIdle = total, idle
+	if totalDelta == 0 {
+		return Metric{}, nil
+	}
+	used := 100 * float64(totalDelta-idleDelta) / float64(totalDelta)
+	return Metric{UsedPercent: clampPercent(used)}, nil
+}
+
+func parseCPUStat(data string) (total, idle uint64, err error) {
+	for _, line := range strings.Split(data, "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)[1:]
+		if len(fields) < 4 {
+			return 0, 0, errors.New("invalid cpu stat line")
+		}
+		values := make([]uint64, 0, len(fields))
+		for _, field := range fields {
+			value, parseErr := strconv.ParseUint(field, 10, 64)
+			if parseErr != nil {
+				return 0, 0, parseErr
+			}
+			values = append(values, value)
+			total += value
+		}
+		idle = values[3]
+		if len(values) > 4 {
+			idle += values[4]
+		}
+		return total, idle, nil
+	}
+	return 0, 0, errors.New("cpu line not found")
+}
+
+func readMemory(filename string) (Memory, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return Memory{}, err
+	}
+	values := make(map[string]uint64)
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		value, parseErr := strconv.ParseUint(fields[1], 10, 64)
+		if parseErr == nil {
+			values[strings.TrimSuffix(fields[0], ":")] = value * 1024
+		}
+	}
+	total := values["MemTotal"]
+	available, ok := values["MemAvailable"]
+	if !ok {
+		available = values["MemFree"] + values["Buffers"] + values["Cached"]
+	}
+	if total == 0 {
+		return Memory{}, errors.New("MemTotal not found")
+	}
+	if available > total {
+		available = total
+	}
+	used := total - available
+	return Memory{UsedBytes: used, TotalBytes: total, UsedPercent: clampPercent(100 * float64(used) / float64(total))}, nil
+}
+
+func (c *Collector) readDisks() ([]Disk, []string) {
+	data, err := os.ReadFile(c.hostProc + "/mounts")
+	if err != nil {
+		return []Disk{}, []string{"无法读取 NAS 磁盘挂载信息: " + err.Error()}
+	}
+	mounts := parseMounts(string(data))
+	disks := make([]Disk, 0, len(mounts))
+	var warnings []string
+	for _, mount := range mounts {
+		path := c.hostRoot + mount.mount
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(path, &stat); err != nil {
+			warnings = append(warnings, fmt.Sprintf("无法读取存储空间 %s: %v", mount.mount, err))
+			continue
+		}
+		blockSize := uint64(stat.Bsize)
+		total := stat.Blocks * blockSize
+		free := stat.Bfree * blockSize
+		if total == 0 {
+			continue
+		}
+		used := total - free
+		disks = append(disks, Disk{
+			Name:        filepathBase(mount.device),
+			Mount:       mount.mount,
+			FileSystem:  mount.fsType,
+			UsedBytes:   used,
+			TotalBytes:  total,
+			UsedPercent: clampPercent(100 * float64(used) / float64(total)),
+		})
+	}
+	sort.Slice(disks, func(i, j int) bool { return disks[i].Mount < disks[j].Mount })
+	return disks, warnings
+}
+
+func parseMounts(data string) []mountInfo {
+	allowed := map[string]bool{"ext4": true, "btrfs": true, "xfs": true, "vfat": true, "exfat": true, "ntfs": true, "fuseblk": true}
+	seen := make(map[string]bool)
+	var mounts []mountInfo
+	for _, line := range strings.Split(data, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || !allowed[fields[2]] {
+			continue
+		}
+		mount := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\134`, `\`).Replace(fields[1])
+		if seen[mount] {
+			continue
+		}
+		seen[mount] = true
+		mounts = append(mounts, mountInfo{device: fields[0], mount: mount, fsType: fields[2]})
+	}
+	return mounts
+}
+
+func (c *Collector) readContainers(ctx context.Context) ([]Container, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v1.41/containers/json", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.docker.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		return nil, fmt.Errorf("Docker API 返回 %s: %s", response.Status, strings.TrimSpace(string(body)))
+	}
+	var listed []dockerContainer
+	if err := json.NewDecoder(response.Body).Decode(&listed); err != nil {
+		return nil, err
+	}
+
+	results := make([]Container, len(listed))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	workerCount := min(8, len(listed))
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				results[index] = c.readContainerStats(ctx, listed[index])
+			}
+		}()
+	}
+	for index := range listed {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
+	return results, nil
+}
+
+func (c *Collector) readContainerStats(ctx context.Context, item dockerContainer) Container {
+	name := strings.TrimPrefix(first(item.Names), "/")
+	if name == "" {
+		name = item.ID[:min(12, len(item.ID))]
+	}
+	container := Container{
+		ID:     item.ID[:min(12, len(item.ID))],
+		Name:   name,
+		Image:  item.Image,
+		Status: item.Status,
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"http://docker/v1.41/containers/"+item.ID+"/stats?stream=false", nil)
+	if err != nil {
+		container.Status = "资源读取失败"
+		return container
+	}
+	response, err := c.docker.Do(request)
+	if err != nil {
+		container.Status = "资源读取失败"
+		return container
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		container.Status = "资源读取失败"
+		return container
+	}
+	var stats dockerStats
+	if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
+		container.Status = "资源读取失败"
+		return container
+	}
+	cpuDelta := stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage
+	systemDelta := stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage
+	cpuCount := uint64(stats.CPUStats.OnlineCPUs)
+	if cpuCount == 0 {
+		cpuCount = uint64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if systemDelta > 0 && cpuDelta <= systemDelta {
+		container.CPUPercent = 100 * float64(cpuDelta) / float64(systemDelta) * float64(cpuCount)
+	}
+	container.MemoryBytes = stats.MemoryStats.Usage
+	if stats.MemoryStats.Stats.InactiveFile > 0 {
+		container.MemoryBytes = subtractFloor(container.MemoryBytes, stats.MemoryStats.Stats.InactiveFile)
+	} else if stats.MemoryStats.Stats.Cache > 0 {
+		container.MemoryBytes = subtractFloor(container.MemoryBytes, stats.MemoryStats.Stats.Cache)
+	}
+	container.MemoryLimit = stats.MemoryStats.Limit
+	if container.MemoryLimit > 0 {
+		container.MemoryPercent = clampPercent(100 * float64(container.MemoryBytes) / float64(container.MemoryLimit))
+	}
+	for _, network := range stats.Networks {
+		container.NetworkBytes += network.RxBytes + network.TxBytes
+	}
+	for _, ioStat := range stats.BlkioStats.IOServicedRecursive {
+		if strings.EqualFold(ioStat.Op, "read") || strings.EqualFold(ioStat.Op, "write") {
+			container.BlockBytes += ioStat.Value
+		}
+	}
+	return container
+}
+
+func (h *hub) publish(snapshot Snapshot) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.latest = snapshot
+	for subscriber := range h.subscribers {
+		select {
+		case subscriber <- snapshot:
+		default:
+			select {
+			case <-subscriber:
+			default:
+			}
+			subscriber <- snapshot
+		}
+	}
+}
+
+func (h *hub) serveSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	ch := make(chan Snapshot, 1)
+	h.mu.Lock()
+	h.subscribers[ch] = struct{}{}
+	latest := h.latest
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		delete(h.subscribers, ch)
+		h.mu.Unlock()
+	}()
+	if !latest.Timestamp.IsZero() {
+		if !writeSSE(w, latest) {
+			return
+		}
+		flusher.Flush()
+	}
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case snapshot := <-ch:
+			if !writeSSE(w, snapshot) {
+				return
+			}
+			flusher.Flush()
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func writeSSE(w io.Writer, snapshot Snapshot) bool {
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		log.Printf("encode snapshot: %v", err)
+		return false
+	}
+	_, err = fmt.Fprintf(w, "event: metrics\ndata: %s\n\n", data)
+	return err == nil
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func first(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func clampPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+func subtractFloor(a, b uint64) uint64 {
+	if b > a {
+		return 0
+	}
+	return a - b
+}
+
+func filepathBase(value string) string {
+	return path.Base(strings.TrimSuffix(value, "/"))
+}

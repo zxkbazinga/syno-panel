@@ -1,0 +1,11 @@
+.git
+.gitignore
+.vscode
+*.tar
+*.tar.gz
+*.zip
+nas-panel-deploy
+nas-panel-deploy.*
+README.md
+LICENSE
+main_test.go
