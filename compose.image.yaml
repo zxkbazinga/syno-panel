@@ -1,6 +1,6 @@
 services:
   nas-panel:
-    image: nas-panel:latest
+    image: "${NAS_PANEL_IMAGE:-nas-panel:latest}"
     container_name: nas-panel
     restart: unless-stopped
     ports:

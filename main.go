@@ -28,13 +28,14 @@ var webFiles embed.FS
 const collectionInterval = 2 * time.Second
 
 type Snapshot struct {
-	Timestamp  time.Time   `json:"timestamp"`
-	Hostname   string      `json:"hostname"`
-	CPU        Metric      `json:"cpu"`
-	Memory     Memory      `json:"memory"`
-	Disks      []Disk      `json:"disks"`
-	Containers []Container `json:"containers"`
-	Warnings   []string    `json:"warnings"`
+	Timestamp  time.Time          `json:"timestamp"`
+	Hostname   string             `json:"hostname"`
+	CPU        Metric             `json:"cpu"`
+	Memory     Memory             `json:"memory"`
+	Disks      []Disk             `json:"disks"`
+	Network    []NetworkInterface `json:"network"`
+	Containers []Container        `json:"containers"`
+	Warnings   []string           `json:"warnings"`
 }
 
 type Metric struct {
@@ -56,6 +57,12 @@ type Disk struct {
 	UsedPercent float64 `json:"usedPercent"`
 }
 
+type NetworkInterface struct {
+	Name                  string  `json:"name"`
+	ReceiveBytesPerSecond float64 `json:"receiveBytesPerSecond"`
+	SendBytesPerSecond    float64 `json:"sendBytesPerSecond"`
+}
+
 type Container struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
@@ -70,12 +77,14 @@ type Container struct {
 }
 
 type Collector struct {
-	docker       *http.Client
-	hostRoot     string
-	hostProc     string
-	previousCPU  uint64
-	previousIdle uint64
-	hasCPU       bool
+	docker            *http.Client
+	hostRoot          string
+	hostProc          string
+	previousCPU       uint64
+	previousIdle      uint64
+	hasCPU            bool
+	previousNetwork   map[string]networkCounters
+	previousNetworkAt time.Time
 }
 
 type hub struct {
@@ -88,6 +97,11 @@ type mountInfo struct {
 	device string
 	mount  string
 	fsType string
+}
+
+type networkCounters struct {
+	received uint64
+	sent     uint64
 }
 
 type dockerContainer struct {
@@ -207,6 +221,7 @@ func (c *Collector) collect(ctx context.Context) Snapshot {
 		Timestamp:  now,
 		Hostname:   host,
 		Disks:      []Disk{},
+		Network:    []NetworkInterface{},
 		Containers: []Container{},
 		Warnings:   []string{},
 	}
@@ -223,6 +238,12 @@ func (c *Collector) collect(ctx context.Context) Snapshot {
 	disks, diskWarnings := c.readDisks()
 	snapshot.Disks = disks
 	snapshot.Warnings = append(snapshot.Warnings, diskWarnings...)
+	network, err := c.readNetwork()
+	if err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "无法读取 NAS 网络信息: "+err.Error())
+	} else {
+		snapshot.Network = network
+	}
 	containers, err := c.readContainers(ctx)
 	if err != nil {
 		snapshot.Warnings = append(snapshot.Warnings, "无法读取 Docker 容器: "+err.Error())
@@ -345,6 +366,84 @@ func (c *Collector) readDisks() ([]Disk, []string) {
 	}
 	sort.Slice(disks, func(i, j int) bool { return disks[i].Mount < disks[j].Mount })
 	return disks, warnings
+}
+
+func (c *Collector) readNetwork() ([]NetworkInterface, error) {
+	data, err := os.ReadFile(c.hostProc + "/net/dev")
+	if err != nil {
+		return nil, err
+	}
+	counters, err := parseNetworkStats(string(data))
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var elapsed time.Duration
+	if !c.previousNetworkAt.IsZero() {
+		elapsed = now.Sub(c.previousNetworkAt)
+	}
+	interfaces := calculateNetworkRates(counters, c.previousNetwork, elapsed)
+	c.previousNetwork = counters
+	c.previousNetworkAt = now
+	return interfaces, nil
+}
+
+func parseNetworkStats(data string) (map[string]networkCounters, error) {
+	counters := make(map[string]networkCounters)
+	for _, line := range strings.Split(data, "\n") {
+		colon := strings.LastIndex(line, ":")
+		if colon < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:colon])
+		if name == "" || isIgnoredNetworkInterface(name) {
+			continue
+		}
+		fields := strings.Fields(line[colon+1:])
+		if len(fields) < 9 {
+			return nil, fmt.Errorf("网卡 %s 的统计数据格式无效", name)
+		}
+		received, err := strconv.ParseUint(fields[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("解析网卡 %s 的接收字节数: %w", name, err)
+		}
+		sent, err := strconv.ParseUint(fields[8], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("解析网卡 %s 的发送字节数: %w", name, err)
+		}
+		counters[name] = networkCounters{received: received, sent: sent}
+	}
+	return counters, nil
+}
+
+func calculateNetworkRates(current, previous map[string]networkCounters, elapsed time.Duration) []NetworkInterface {
+	interfaces := make([]NetworkInterface, 0, len(current))
+	for name, counters := range current {
+		item := NetworkInterface{Name: name}
+		if old, exists := previous[name]; elapsed > 0 && exists {
+			item.ReceiveBytesPerSecond = float64(counterDelta(counters.received, old.received)) / elapsed.Seconds()
+			item.SendBytesPerSecond = float64(counterDelta(counters.sent, old.sent)) / elapsed.Seconds()
+		}
+		interfaces = append(interfaces, item)
+	}
+	sort.Slice(interfaces, func(i, j int) bool { return interfaces[i].Name < interfaces[j].Name })
+	return interfaces
+}
+
+func counterDelta(current, previous uint64) uint64 {
+	if current < previous {
+		return current
+	}
+	return current - previous
+}
+
+func isIgnoredNetworkInterface(name string) bool {
+	for _, prefix := range []string{"docker", "veth", "br-", "virbr", "tun", "tap", "wg", "tailscale", "ifb"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return name == "lo"
 }
 
 func parseMounts(data string) []mountInfo {

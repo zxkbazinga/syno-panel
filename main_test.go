@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseCPUStat(t *testing.T) {
@@ -74,5 +75,46 @@ func TestIsNASVolumeMount(t *testing.T) {
 		if got := isNASVolumeMount(test.mount); got != test.want {
 			t.Errorf("isNASVolumeMount(%q) = %t, want %t", test.mount, got, test.want)
 		}
+	}
+}
+
+func TestParseNetworkStats(t *testing.T) {
+	got, err := parseNetworkStats("Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n  lo: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n eth0: 1000 2 0 0 0 0 0 0 2000 3 0 0 0 0 0 0\n docker0: 3000 0 0 0 0 0 0 0 4000 0 0 0 0 0 0 0\n bond0: 5000 4 0 0 0 0 0 0 6000 5 0 0 0 0 0 0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]networkCounters{
+		"eth0":  {received: 1000, sent: 2000},
+		"bond0": {received: 5000, sent: 6000},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseNetworkStats() = %#v, want %#v", got, want)
+	}
+}
+
+func TestCalculateNetworkRates(t *testing.T) {
+	current := map[string]networkCounters{
+		"eth0":  {received: 3000, sent: 5000},
+		"bond0": {received: 250, sent: 500},
+		"new0":  {received: 10000, sent: 20000},
+	}
+	previous := map[string]networkCounters{
+		"eth0":  {received: 1000, sent: 1000},
+		"bond0": {received: 500, sent: 1000},
+	}
+	got := calculateNetworkRates(current, previous, 2*time.Second)
+	want := []NetworkInterface{
+		{Name: "bond0", ReceiveBytesPerSecond: 125, SendBytesPerSecond: 250},
+		{Name: "eth0", ReceiveBytesPerSecond: 1000, SendBytesPerSecond: 2000},
+		{Name: "new0"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("calculateNetworkRates() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseNetworkStatsRejectsInvalidCounters(t *testing.T) {
+	if _, err := parseNetworkStats("eth0: invalid\n"); err == nil {
+		t.Fatal("parseNetworkStats() expected an error for invalid counters")
 	}
 }

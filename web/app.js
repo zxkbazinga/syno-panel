@@ -1,5 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const diskList = $("#disk-list");
+const networkList = $("#network-list");
 const containerList = $("#container-list");
 const mobileList = $("#mobile-container-list");
 
@@ -54,6 +55,25 @@ function renderDisks(disks) {
   }).join("");
 }
 
+function renderNetwork(interfaces) {
+  $("#network-count").textContent = `${interfaces.length} 个网卡 · 每 2 秒更新`;
+  if (!interfaces.length) {
+    networkList.innerHTML = '<div class="empty-state"><span class="empty-icon">◌</span><span>未发现可读取的网络接口</span></div>';
+    return;
+  }
+  networkList.innerHTML = interfaces.map((network) => `
+    <article class="network-card">
+      <div class="network-card-head">
+        <span class="network-icon" aria-hidden="true">⌁</span>
+        <div><div class="network-name">${safeText(network.name)}</div><div class="network-label">NAS 网卡实时流量</div></div>
+      </div>
+      <div class="network-rate">
+        <div><span class="network-rate-label"><span class="network-receive">↓</span> 接收</span><strong class="network-rate-value">${bytes(Number(network.receiveBytesPerSecond) || 0)}/s</strong></div>
+        <div><span class="network-rate-label"><span class="network-send">↑</span> 发送</span><strong class="network-rate-value">${bytes(Number(network.sendBytesPerSecond) || 0)}/s</strong></div>
+      </div>
+    </article>`).join("");
+}
+
 function statusMarkup(status) {
   const stopped = /exited|created|dead|paused/i.test(status);
   const error = status === "资源读取失败";
@@ -103,12 +123,6 @@ function renderContainers(containers) {
   mobileList.innerHTML = rows.map((item) => item.mobile).join("");
 }
 
-function renderWarnings(warnings) {
-  const banner = $("#warning-banner");
-  banner.hidden = !warnings.length;
-  $("#warning-list").innerHTML = warnings.map((warning) => `<li>${safeText(warning)}</li>`).join("");
-}
-
 function render(snapshot) {
   $("#hostname").textContent = snapshot.hostname || "Synology NAS";
   setRing("cpu", snapshot.cpu?.usedPercent);
@@ -122,8 +136,8 @@ function render(snapshot) {
   $("#memory-status").textContent = `${bytes(Math.max(0, (memory.totalBytes || 0) - (memory.usedBytes || 0)))} 可用`;
 
   renderDisks(snapshot.disks || []);
+  renderNetwork(snapshot.network || []);
   renderContainers(snapshot.containers || []);
-  renderWarnings(snapshot.warnings || []);
   $("#last-updated").textContent = new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   }).format(new Date(snapshot.timestamp));

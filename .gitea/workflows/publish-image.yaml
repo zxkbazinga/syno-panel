@@ -1,0 +1,40 @@
+name: Publish NAS panel image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      ZOT_REGISTRY: zot.zzbazinga.site:8888
+      ZOT_IMAGE: nas-panel
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check host Docker access
+        run: docker version
+
+      - name: Log in to Zot
+        env:
+          ZOT_USERNAME: ${{ secrets.ZOT_USERNAME }}
+          ZOT_PASSWORD: ${{ secrets.ZOT_PASSWORD }}
+        run: |
+          printf '%s' "$ZOT_PASSWORD" |
+            docker login "$ZOT_REGISTRY" \
+              --username "$ZOT_USERNAME" \
+              --password-stdin
+
+      - name: Build and push amd64 image
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --tag "$ZOT_REGISTRY/$ZOT_IMAGE:$GITHUB_SHA" \
+            --tag "$ZOT_REGISTRY/$ZOT_IMAGE:latest" \
+            .
+          docker push "$ZOT_REGISTRY/$ZOT_IMAGE:$GITHUB_SHA"
+          docker push "$ZOT_REGISTRY/$ZOT_IMAGE:latest"
