@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: publish-nas-panel-main
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -15,9 +19,65 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check host Docker access
         run: docker version
+
+      - name: Calculate semantic version
+        id: version
+        shell: bash
+        run: |
+          git fetch origin --tags
+          git config user.name "Gitea Actions"
+          git config user.email "gitea-actions@localhost"
+
+          latest_tag="$(git for-each-ref \
+            --format='%(refname:short)' \
+            --sort=-version:refname refs/tags |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+            head -n 1 || true)"
+
+          if [ -z "$latest_tag" ]; then
+            release_tag="v0.1.0"
+          else
+            bump=0
+            while IFS= read -r commit; do
+              subject="$(git show -s --format=%s "$commit")"
+              body="$(git show -s --format=%b "$commit")"
+              if printf '%s\n' "$subject" | grep -Eq '^((feat|fix|perf)(\([^)]*\))?!:)'; then
+                bump=3
+              elif printf '%s\n' "$body" | grep -q '^BREAKING CHANGE:'; then
+                bump=3
+              elif printf '%s\n' "$subject" | grep -Eq '^feat(\([^)]*\))?:' && [ "$bump" -lt 2 ]; then
+                bump=2
+              elif printf '%s\n' "$subject" | grep -Eq '^(fix|perf)(\([^)]*\))?:' && [ "$bump" -lt 1 ]; then
+                bump=1
+              fi
+            done < <(git rev-list "$latest_tag..HEAD")
+
+            if [ "$bump" -eq 0 ]; then
+              echo "No feat/fix/perf commit found since $latest_tag; publishing latest and SHA tags only."
+              release_tag=""
+            else
+              version="${latest_tag#v}"
+              IFS=. read -r major minor patch <<< "$version"
+              case "$bump" in
+                3) major=$((major + 1)); minor=0; patch=0 ;;
+                2) minor=$((minor + 1)); patch=0 ;;
+                1) patch=$((patch + 1)) ;;
+              esac
+              release_tag="v${major}.${minor}.${patch}"
+            fi
+          fi
+
+          if [ -n "$release_tag" ]; then
+            echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+            echo "Next release: $release_tag"
+          else
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to Zot
         env:
@@ -30,11 +90,21 @@ jobs:
               --password-stdin
 
       - name: Build and push amd64 image
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
         run: |
+          image="$ZOT_REGISTRY/$ZOT_IMAGE"
           docker build \
             --platform linux/amd64 \
-            --tag "$ZOT_REGISTRY/$ZOT_IMAGE:$GITHUB_SHA" \
-            --tag "$ZOT_REGISTRY/$ZOT_IMAGE:latest" \
+            --tag "$image:$GITHUB_SHA" \
+            --tag "$image:latest" \
             .
-          docker push "$ZOT_REGISTRY/$ZOT_IMAGE:$GITHUB_SHA"
-          docker push "$ZOT_REGISTRY/$ZOT_IMAGE:latest"
+          docker push "$image:$GITHUB_SHA"
+          docker push "$image:latest"
+
+          if [ -n "$RELEASE_TAG" ]; then
+            docker tag "$image:$GITHUB_SHA" "$image:$RELEASE_TAG"
+            docker push "$image:$RELEASE_TAG"
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Release $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi

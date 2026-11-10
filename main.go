@@ -25,7 +25,10 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const collectionInterval = 2 * time.Second
+const (
+	hostMetricsInterval      = time.Second
+	containerRefreshInterval = 5 * time.Second
+)
 
 type Snapshot struct {
 	Timestamp  time.Time          `json:"timestamp"`
@@ -88,9 +91,11 @@ type Collector struct {
 }
 
 type hub struct {
-	mu          sync.Mutex
-	latest      Snapshot
-	subscribers map[chan Snapshot]struct{}
+	mu            sync.Mutex
+	latest        Snapshot
+	hostWarnings  []string
+	dockerWarning string
+	subscribers   map[chan Snapshot]struct{}
 }
 
 type mountInfo struct {
@@ -159,7 +164,7 @@ func main() {
 		},
 	}
 	collector := &Collector{
-		docker:   &http.Client{Transport: dockerTransport, Timeout: 5 * time.Second},
+		docker:   &http.Client{Transport: dockerTransport},
 		hostRoot: hostRoot,
 		hostProc: hostProc,
 	}
@@ -194,10 +199,11 @@ func main() {
 }
 
 func (c *Collector) run(ctx context.Context, stream *hub) {
-	ticker := time.NewTicker(collectionInterval)
+	go c.runContainerMonitor(ctx, stream)
+	ticker := time.NewTicker(hostMetricsInterval)
 	defer ticker.Stop()
 	for {
-		snapshot := c.collect(ctx)
+		snapshot := c.collect()
 		stream.publish(snapshot)
 		select {
 		case <-ctx.Done():
@@ -207,7 +213,7 @@ func (c *Collector) run(ctx context.Context, stream *hub) {
 	}
 }
 
-func (c *Collector) collect(ctx context.Context) Snapshot {
+func (c *Collector) collect() Snapshot {
 	now := time.Now()
 	hostnameData, _ := os.ReadFile(c.hostRoot + "/etc/hostname")
 	host := strings.TrimSpace(string(hostnameData))
@@ -243,12 +249,6 @@ func (c *Collector) collect(ctx context.Context) Snapshot {
 		snapshot.Warnings = append(snapshot.Warnings, "无法读取 NAS 网络信息: "+err.Error())
 	} else {
 		snapshot.Network = network
-	}
-	containers, err := c.readContainers(ctx)
-	if err != nil {
-		snapshot.Warnings = append(snapshot.Warnings, "无法读取 Docker 容器: "+err.Error())
-	} else {
-		snapshot.Containers = containers
 	}
 	return snapshot
 }
@@ -498,8 +498,60 @@ func isNASVolumeMount(mount string) bool {
 		strings.HasPrefix(parts[1], "usbshare")
 }
 
-func (c *Collector) readContainers(ctx context.Context) ([]Container, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v1.41/containers/json", nil)
+func (c *Collector) runContainerMonitor(ctx context.Context, stream *hub) {
+	active := make(map[string]context.CancelFunc)
+	refresh := func() {
+		listed, err := c.listContainers(ctx)
+		if err != nil {
+			stream.setDockerWarning("无法读取 Docker 容器: " + err.Error())
+			log.Printf("list Docker containers: %v", err)
+			return
+		}
+		stream.setDockerWarning("")
+
+		running := make(map[string]struct{}, len(listed))
+		containers := make([]Container, 0, len(listed))
+		for _, item := range listed {
+			if item.State != "running" {
+				continue
+			}
+			running[item.ID] = struct{}{}
+			containers = append(containers, containerFromList(item))
+			if _, exists := active[item.ID]; !exists {
+				containerCtx, cancel := context.WithCancel(ctx)
+				active[item.ID] = cancel
+				go c.streamContainerStats(containerCtx, item, stream)
+			}
+		}
+		for id, cancel := range active {
+			if _, exists := running[id]; !exists {
+				cancel()
+				delete(active, id)
+			}
+		}
+		stream.setContainers(containers)
+	}
+
+	refresh()
+	ticker := time.NewTicker(containerRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			for _, cancel := range active {
+				cancel()
+			}
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
+func (c *Collector) listContainers(ctx context.Context) ([]dockerContainer, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://docker/v1.41/containers/json", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -512,67 +564,77 @@ func (c *Collector) readContainers(ctx context.Context) ([]Container, error) {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 		return nil, fmt.Errorf("Docker API 返回 %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
-	var listed []dockerContainer
-	if err := json.NewDecoder(response.Body).Decode(&listed); err != nil {
+	var containers []dockerContainer
+	if err := json.NewDecoder(response.Body).Decode(&containers); err != nil {
 		return nil, err
 	}
-
-	results := make([]Container, len(listed))
-	jobs := make(chan int)
-	var workers sync.WaitGroup
-	workerCount := min(8, len(listed))
-	for worker := 0; worker < workerCount; worker++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			for index := range jobs {
-				results[index] = c.readContainerStats(ctx, listed[index])
-			}
-		}()
-	}
-	for index := range listed {
-		jobs <- index
-	}
-	close(jobs)
-	workers.Wait()
-	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
-	return results, nil
+	return containers, nil
 }
 
-func (c *Collector) readContainerStats(ctx context.Context, item dockerContainer) Container {
+func containerFromList(item dockerContainer) Container {
 	name := strings.TrimPrefix(first(item.Names), "/")
 	if name == "" {
 		name = item.ID[:min(12, len(item.ID))]
 	}
-	container := Container{
+	return Container{
 		ID:     item.ID[:min(12, len(item.ID))],
 		Name:   name,
 		Image:  item.Image,
 		Status: item.Status,
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"http://docker/v1.41/containers/"+item.ID+"/stats?stream=false", nil)
-	if err != nil {
-		container.Status = "资源读取失败"
-		return container
+}
+
+func (c *Collector) streamContainerStats(ctx context.Context, item dockerContainer, stream *hub) {
+	container := containerFromList(item)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			"http://docker/v1.41/containers/"+item.ID+"/stats?stream=true", nil)
+		if err == nil {
+			var response *http.Response
+			response, err = c.docker.Do(request)
+			if err == nil {
+				if response.StatusCode != http.StatusOK {
+					body, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+					err = fmt.Errorf("Docker stats API 返回 %s: %s", response.Status, strings.TrimSpace(string(body)))
+					_ = response.Body.Close()
+				} else {
+					decoder := json.NewDecoder(response.Body)
+					for {
+						var stats dockerStats
+						if decodeErr := decoder.Decode(&stats); decodeErr != nil {
+							err = decodeErr
+							break
+						}
+						stream.updateContainer(containerWithStats(container, item.Status, stats))
+					}
+					_ = response.Body.Close()
+				}
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		failed := container
+		failed.Status = "资源读取失败"
+		stream.updateContainer(failed)
+		log.Printf("stream Docker stats for %s: %v", container.Name, err)
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
-	response, err := c.docker.Do(request)
-	if err != nil {
-		container.Status = "资源读取失败"
-		return container
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		container.Status = "资源读取失败"
-		return container
-	}
-	var stats dockerStats
-	if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
-		container.Status = "资源读取失败"
-		return container
-	}
-	cpuDelta := stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage
-	systemDelta := stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage
+}
+
+func containerWithStats(container Container, status string, stats dockerStats) Container {
+	container.Status = status
+	cpuDelta := counterDelta(stats.CPUStats.CPUUsage.TotalUsage, stats.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := counterDelta(stats.CPUStats.SystemUsage, stats.PreCPUStats.SystemUsage)
 	cpuCount := uint64(stats.CPUStats.OnlineCPUs)
 	if cpuCount == 0 {
 		cpuCount = uint64(len(stats.CPUStats.CPUUsage.PercpuUsage))
@@ -590,9 +652,11 @@ func (c *Collector) readContainerStats(ctx context.Context, item dockerContainer
 	if container.MemoryLimit > 0 {
 		container.MemoryPercent = clampPercent(100 * float64(container.MemoryBytes) / float64(container.MemoryLimit))
 	}
+	container.NetworkBytes = 0
 	for _, network := range stats.Networks {
 		container.NetworkBytes += network.RxBytes + network.TxBytes
 	}
+	container.BlockBytes = 0
 	for _, ioStat := range stats.BlkioStats.IOServicedRecursive {
 		if strings.EqualFold(ioStat.Op, "read") || strings.EqualFold(ioStat.Op, "write") {
 			container.BlockBytes += ioStat.Value
@@ -604,8 +668,80 @@ func (c *Collector) readContainerStats(ctx context.Context, item dockerContainer
 func (h *hub) publish(snapshot Snapshot) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	snapshot.Containers = h.latest.Containers
+	h.hostWarnings = append([]string(nil), snapshot.Warnings...)
 	h.latest = snapshot
+	h.applyWarningsLocked()
+	h.broadcastLocked()
+}
+
+func (h *hub) setDockerWarning(warning string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.dockerWarning == warning {
+		return
+	}
+	h.dockerWarning = warning
+	h.latest.Timestamp = time.Now()
+	h.applyWarningsLocked()
+	h.broadcastLocked()
+}
+
+func (h *hub) setContainers(containers []Container) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	previous := make(map[string]Container, len(h.latest.Containers))
+	for _, container := range h.latest.Containers {
+		previous[container.ID] = container
+	}
+	for index, container := range containers {
+		if old, exists := previous[container.ID]; exists {
+			container.CPUPercent = old.CPUPercent
+			container.MemoryBytes = old.MemoryBytes
+			container.MemoryLimit = old.MemoryLimit
+			container.MemoryPercent = old.MemoryPercent
+			container.NetworkBytes = old.NetworkBytes
+			container.BlockBytes = old.BlockBytes
+		}
+		containers[index] = container
+	}
+	sort.Slice(containers, func(i, j int) bool { return containers[i].Name < containers[j].Name })
+	h.latest.Containers = containers
+	h.latest.Timestamp = time.Now()
+	h.broadcastLocked()
+}
+
+func (h *hub) updateContainer(container Container) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	found := false
+	for index := range h.latest.Containers {
+		if h.latest.Containers[index].ID == container.ID {
+			h.latest.Containers[index] = container
+			found = true
+			break
+		}
+	}
+	if !found {
+		h.latest.Containers = append(h.latest.Containers, container)
+	}
+	sort.Slice(h.latest.Containers, func(i, j int) bool {
+		return h.latest.Containers[i].Name < h.latest.Containers[j].Name
+	})
+	h.latest.Timestamp = time.Now()
+	h.broadcastLocked()
+}
+
+func (h *hub) applyWarningsLocked() {
+	h.latest.Warnings = append([]string(nil), h.hostWarnings...)
+	if h.dockerWarning != "" {
+		h.latest.Warnings = append(h.latest.Warnings, h.dockerWarning)
+	}
+}
+
+func (h *hub) broadcastLocked() {
 	for subscriber := range h.subscribers {
+		snapshot := cloneSnapshot(h.latest)
 		select {
 		case subscriber <- snapshot:
 		default:
@@ -616,6 +752,14 @@ func (h *hub) publish(snapshot Snapshot) {
 			subscriber <- snapshot
 		}
 	}
+}
+
+func cloneSnapshot(snapshot Snapshot) Snapshot {
+	snapshot.Disks = append([]Disk(nil), snapshot.Disks...)
+	snapshot.Network = append([]NetworkInterface(nil), snapshot.Network...)
+	snapshot.Containers = append([]Container(nil), snapshot.Containers...)
+	snapshot.Warnings = append([]string(nil), snapshot.Warnings...)
+	return snapshot
 }
 
 func (h *hub) serveSSE(w http.ResponseWriter, r *http.Request) {
@@ -631,7 +775,7 @@ func (h *hub) serveSSE(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan Snapshot, 1)
 	h.mu.Lock()
 	h.subscribers[ch] = struct{}{}
-	latest := h.latest
+	latest := cloneSnapshot(h.latest)
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()

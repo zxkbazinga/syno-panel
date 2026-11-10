@@ -56,7 +56,7 @@ function renderDisks(disks) {
 }
 
 function renderNetwork(interfaces) {
-  $("#network-count").textContent = `${interfaces.length} 个网卡 · 每 2 秒更新`;
+  $("#network-count").textContent = `${interfaces.length} 个网卡 · 约 1 秒采样`;
   if (!interfaces.length) {
     networkList.innerHTML = '<div class="empty-state"><span class="empty-icon">◌</span><span>未发现可读取的网络接口</span></div>';
     return;
@@ -65,7 +65,7 @@ function renderNetwork(interfaces) {
     <article class="network-card">
       <div class="network-card-head">
         <span class="network-icon" aria-hidden="true">⌁</span>
-        <div><div class="network-name">${safeText(network.name)}</div><div class="network-label">NAS 网卡实时流量</div></div>
+        <div><div class="network-name">${safeText(network.name)}</div><div class="network-label">NAS 网卡流量 · 约 1 秒采样</div></div>
       </div>
       <div class="network-rate">
         <div><span class="network-rate-label"><span class="network-receive">↓</span> 接收</span><strong class="network-rate-value">${bytes(Number(network.receiveBytesPerSecond) || 0)}/s</strong></div>

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -116,5 +117,70 @@ func TestCalculateNetworkRates(t *testing.T) {
 func TestParseNetworkStatsRejectsInvalidCounters(t *testing.T) {
 	if _, err := parseNetworkStats("eth0: invalid\n"); err == nil {
 		t.Fatal("parseNetworkStats() expected an error for invalid counters")
+	}
+}
+
+func TestContainerWithStats(t *testing.T) {
+	var stats dockerStats
+	data := `{
+		"cpu_stats":{"cpu_usage":{"total_usage":300},"system_cpu_usage":2000,"online_cpus":4},
+		"precpu_stats":{"cpu_usage":{"total_usage":100},"system_cpu_usage":1000},
+		"memory_stats":{"usage":1500,"limit":4000,"stats":{"inactive_file":500}},
+		"networks":{"eth0":{"rx_bytes":100,"tx_bytes":200}},
+		"blkio_stats":{"io_service_bytes_recursive":[{"op":"read","value":30},{"op":"write","value":20}]}
+	}`
+	if err := json.Unmarshal([]byte(data), &stats); err != nil {
+		t.Fatal(err)
+	}
+	got := containerWithStats(Container{ID: "abc", Name: "web"}, "Up 5 seconds", stats)
+	if got.CPUPercent != 80 || got.MemoryBytes != 1000 || got.MemoryPercent != 25 ||
+		got.NetworkBytes != 300 || got.BlockBytes != 50 || got.Status != "Up 5 seconds" {
+		t.Fatalf("containerWithStats() = %+v, want live CPU/memory/network/block stats", got)
+	}
+}
+
+func TestHubPublishesContainerUpdateImmediately(t *testing.T) {
+	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
+	subscriber := make(chan Snapshot, 1)
+	stream.mu.Lock()
+	stream.subscribers[subscriber] = struct{}{}
+	stream.mu.Unlock()
+	defer func() {
+		stream.mu.Lock()
+		delete(stream.subscribers, subscriber)
+		stream.mu.Unlock()
+	}()
+
+	stream.publish(Snapshot{Timestamp: time.Now(), Hostname: "nas"})
+	<-subscriber
+	stream.updateContainer(Container{ID: "abc", Name: "web", CPUPercent: 12.5})
+
+	select {
+	case snapshot := <-subscriber:
+		if len(snapshot.Containers) != 1 || snapshot.Containers[0].CPUPercent != 12.5 {
+			t.Fatalf("received snapshot = %+v, want immediate container update", snapshot)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("container update was not published immediately")
+	}
+}
+
+func TestHubBroadcastClonesSnapshotSlices(t *testing.T) {
+	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
+	subscriber := make(chan Snapshot, 2)
+	stream.mu.Lock()
+	stream.subscribers[subscriber] = struct{}{}
+	stream.mu.Unlock()
+	defer func() {
+		stream.mu.Lock()
+		delete(stream.subscribers, subscriber)
+		stream.mu.Unlock()
+	}()
+
+	stream.setContainers([]Container{{ID: "abc", CPUPercent: 1}})
+	first := <-subscriber
+	stream.updateContainer(Container{ID: "abc", CPUPercent: 2})
+	if first.Containers[0].CPUPercent != 1 {
+		t.Fatalf("earlier snapshot mutated to %+v", first.Containers[0])
 	}
 }
