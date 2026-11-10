@@ -18,9 +18,9 @@ jobs:
       ZOT_IMAGE: nas-panel
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: builtin:checkout
         with:
-          fetch-depth: 0
+         fetch-depth: 1
 
       - name: Check host Docker access
         run: docker version
