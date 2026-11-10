@@ -390,7 +390,6 @@ footer i { padding: 0 4px; color: var(--pink); font-style: normal; }
 .footer-version strong { margin-left: 5px; color: var(--mint); font-weight: 400; }
 @media (hover: hover) and (pointer: fine) {
   .overview-card:hover, .disk-card:hover, .network-card:hover {
-    transform: perspective(900px) translateY(-4px) rotateX(1deg);
     border-color: color-mix(in srgb, var(--accent, var(--mint)) 36%, var(--border));
     box-shadow: inset 0 1px rgba(255,255,255,.09), inset 0 -18px 30px rgba(0,0,0,.08), 0 25px 42px rgba(0,0,0,.3), 0 8px 14px rgba(0,0,0,.17);
   }
