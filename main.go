@@ -596,6 +596,8 @@ func containerFromList(item dockerContainer) Container {
 
 func (c *Collector) streamContainerStats(ctx context.Context, item dockerContainer, stream *hub) {
 	container := containerFromList(item)
+	var previousCPU float64
+	hasPreviousCPU := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -618,7 +620,15 @@ func (c *Collector) streamContainerStats(ctx context.Context, item dockerContain
 							err = decodeErr
 							break
 						}
-						stream.updateContainer(containerWithStats(container, item.Status, stats))
+						updated := containerWithStats(container, item.Status, stats)
+						if currentCPU, ok := dockerCPUPercent(stats); ok {
+							if hasPreviousCPU {
+								currentCPU = previousCPU*0.65 + currentCPU*0.35
+							}
+							updated.CPUPercent = currentCPU
+							previousCPU, hasPreviousCPU = currentCPU, true
+						}
+						stream.updateContainer(updated)
 					}
 					_ = response.Body.Close()
 				}
@@ -643,14 +653,8 @@ func (c *Collector) streamContainerStats(ctx context.Context, item dockerContain
 
 func containerWithStats(container Container, status string, stats dockerStats) Container {
 	container.Status = status
-	cpuDelta := counterDelta(stats.CPUStats.CPUUsage.TotalUsage, stats.PreCPUStats.CPUUsage.TotalUsage)
-	systemDelta := counterDelta(stats.CPUStats.SystemUsage, stats.PreCPUStats.SystemUsage)
-	cpuCount := uint64(stats.CPUStats.OnlineCPUs)
-	if cpuCount == 0 {
-		cpuCount = uint64(len(stats.CPUStats.CPUUsage.PercpuUsage))
-	}
-	if systemDelta > 0 && cpuDelta <= systemDelta {
-		container.CPUPercent = 100 * float64(cpuDelta) / float64(systemDelta) * float64(cpuCount)
+	if cpuPercent, ok := dockerCPUPercent(stats); ok {
+		container.CPUPercent = cpuPercent
 	}
 	container.MemoryBytes = stats.MemoryStats.Usage
 	if stats.MemoryStats.Stats.InactiveFile > 0 {
@@ -673,6 +677,19 @@ func containerWithStats(container Container, status string, stats dockerStats) C
 		}
 	}
 	return container
+}
+
+func dockerCPUPercent(stats dockerStats) (float64, bool) {
+	cpuDelta := counterDelta(stats.CPUStats.CPUUsage.TotalUsage, stats.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := counterDelta(stats.CPUStats.SystemUsage, stats.PreCPUStats.SystemUsage)
+	cpuCount := uint64(stats.CPUStats.OnlineCPUs)
+	if cpuCount == 0 {
+		cpuCount = uint64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if systemDelta == 0 || cpuCount == 0 {
+		return 0, false
+	}
+	return 100 * float64(cpuDelta) / float64(systemDelta) * float64(cpuCount), true
 }
 
 func (h *hub) publish(snapshot Snapshot) {

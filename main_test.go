@@ -162,6 +162,23 @@ func TestContainerWithStats(t *testing.T) {
 	}
 }
 
+func TestDockerCPUPercentAllowsUsageAcrossMultipleCores(t *testing.T) {
+	var stats dockerStats
+	stats.CPUStats.CPUUsage.TotalUsage = 2500
+	stats.CPUStats.SystemUsage = 3000
+	stats.CPUStats.OnlineCPUs = 4
+	stats.PreCPUStats.CPUUsage.TotalUsage = 1000
+	stats.PreCPUStats.SystemUsage = 2000
+
+	got, ok := dockerCPUPercent(stats)
+	if !ok {
+		t.Fatal("dockerCPUPercent() did not calculate valid multi-core usage")
+	}
+	if got != 600 {
+		t.Fatalf("dockerCPUPercent() = %v, want 600%%", got)
+	}
+}
+
 func TestHubPublishesContainerUpdateImmediately(t *testing.T) {
 	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
 	subscriber := make(chan Snapshot, 1)

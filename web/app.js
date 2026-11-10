@@ -75,9 +75,24 @@ function renderNetwork(interfaces) {
 }
 
 function statusMarkup(status) {
-  const stopped = /exited|created|dead|paused/i.test(status);
-  const error = status === "资源读取失败";
-  return `<span class="status ${error ? "error" : stopped ? "stopped" : ""}">${safeText(status || "未知")}</span>`;
+  const value = status || "未知";
+  let label = value;
+  let tone = "";
+  if (value === "资源读取失败" || /unhealthy|restarting/i.test(value)) {
+    label = /restarting/i.test(value) ? "重启中" : value === "资源读取失败" ? value : "健康检查失败";
+    tone = "error";
+  } else if (/health:\s*starting|health: starting|starting/i.test(value)) {
+    label = "健康检查中";
+    tone = "warning";
+  } else if (/\(healthy\)|\bhealthy\b/i.test(value)) {
+    label = "运行正常";
+  } else if (/exited|created|dead|paused/i.test(value)) {
+    label = "已停止";
+    tone = "stopped";
+  } else if (/^up\b/i.test(value)) {
+    label = "运行中";
+  }
+  return `<span class="status ${tone}">${safeText(label)}</span>`;
 }
 
 function containerMarkup(container) {

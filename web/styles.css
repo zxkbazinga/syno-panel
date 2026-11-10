@@ -249,6 +249,7 @@ tbody tr:hover { background: rgba(80,246,220,.035); }
 .status { display: inline-flex; align-items: center; gap: 6px; color: var(--mint); font-size: 10px; }
 .status::before { width: 5px; height: 5px; content: ""; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
 .status.stopped { color: var(--faint); }
+.status.warning { color: var(--amber); }
 .status.error { color: var(--danger); }
 .resource-cell { min-width: 108px; }
 .resource-cell > span { display: block; margin-bottom: 6px; color: #c1cce0; font: 10px var(--mono); }
