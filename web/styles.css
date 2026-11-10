@@ -262,6 +262,9 @@ tbody tr:hover { background: rgba(80,246,220,.035); }
 .mobile-container-list { display: none; }
 footer { display: flex; justify-content: space-between; margin-top: 48px; padding: 17px 0 24px; border-top: 1px solid var(--border); color: var(--faint); font: 9px var(--mono); letter-spacing: .3px; }
 footer i { padding: 0 4px; color: var(--pink); font-style: normal; }
+.footer-meta { display: inline-flex; align-items: center; gap: 18px; }
+.footer-version { color: var(--faint); }
+.footer-version strong { margin-left: 5px; color: var(--mint); font-weight: 400; }
 @media (max-width: 900px) {
   .page-shell { padding: 0 30px; }
   .overview-grid { grid-template-columns: 1fr 1fr; }
@@ -331,6 +334,7 @@ footer i { padding: 0 4px; color: var(--pink); font-style: normal; }
   .mobile-stat-value { color: #c1cce0; font: 10px var(--mono); }
   .mobile-resource { margin-top: 6px; }
   footer { gap: 12px; margin-top: 36px; font-size: 8px; }
+  .footer-meta { align-items: end; flex-direction: column; gap: 5px; text-align: right; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

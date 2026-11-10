@@ -25,6 +25,8 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
+var version = "dev"
+
 const (
 	hostMetricsInterval      = time.Second
 	containerRefreshInterval = 5 * time.Second
@@ -175,6 +177,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/events", stream.serveSSE)
+	mux.HandleFunc("/api/version", serveVersion)
 	webRoot, err := fs.Sub(webFiles, "web")
 	if err != nil {
 		log.Fatal(err)
@@ -195,6 +198,14 @@ func main() {
 	log.Printf("NAS panel listening on :%s", port)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
+	}
+}
+
+func serveVersion(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if _, err := fmt.Fprint(w, version); err != nil {
+		log.Printf("write app version: %v", err)
 	}
 }
 

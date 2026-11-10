@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -182,5 +183,20 @@ func TestHubBroadcastClonesSnapshotSlices(t *testing.T) {
 	stream.updateContainer(Container{ID: "abc", CPUPercent: 2})
 	if first.Containers[0].CPUPercent != 1 {
 		t.Fatalf("earlier snapshot mutated to %+v", first.Containers[0])
+	}
+}
+
+func TestServeVersion(t *testing.T) {
+	previous := version
+	version = "v1.2.3"
+	defer func() { version = previous }()
+
+	recorder := httptest.NewRecorder()
+	serveVersion(recorder, httptest.NewRequest("GET", "/api/version", nil))
+	if recorder.Body.String() != "v1.2.3" {
+		t.Fatalf("version response = %q, want %q", recorder.Body.String(), "v1.2.3")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 }

@@ -33,7 +33,7 @@ NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest docker compose -f compo
 
 ## 使用 Gitea act_runner 构建并推送到 Zot
 
-仓库中的 `.gitea/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 Zot。每次构建都会更新 `latest` 并发布以提交 SHA 命名的不可变镜像标签；符合 Conventional Commits 的版本更新还会发布 SemVer 镜像标签并创建对应的 Git 标签（格式 `v主版本.次版本.补丁版本`）。
+仓库中的 `.gitea/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 Zot。每次构建都会更新 `latest` 并发布以提交 SHA 命名的不可变镜像标签；符合 Conventional Commits 的版本更新还会发布 SemVer 镜像标签并创建对应的 Git 标签（格式 `v主版本.次版本.补丁版本`）。页面底部会显示镜像构建时注入的版本号。
 
 版本升级规则（统计自上一个 `vX.Y.Z` Git 标签之后的所有提交）：
 

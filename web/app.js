@@ -144,6 +144,16 @@ function render(snapshot) {
 }
 
 const connection = $("#connection");
+fetch("/api/version")
+  .then((response) => {
+    if (!response.ok) throw new Error(`版本请求失败: ${response.status}`);
+    return response.text();
+  })
+  .then((value) => {
+    $("#app-version").textContent = value.trim() || "dev";
+  })
+  .catch((error) => console.error("无法读取看板版本", error));
+
 const connect = () => {
   const source = new EventSource("/api/events");
   source.addEventListener("metrics", (event) => {
