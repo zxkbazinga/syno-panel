@@ -23,9 +23,9 @@ for (const option of themeOptions) {
 function bytes(value) {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
-  const amount = value / 1024 ** index;
-  return `${amount.toFixed(index > 0 && amount < 10 ? 1 : 0)} ${units[index]}`;
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1000)), units.length - 1);
+  const amount = value / 1000 ** index;
+  return `${amount.toFixed(index > 0 && amount < 100 ? 1 : 0)} ${units[index]}`;
 }
 
 function percent(value) {
