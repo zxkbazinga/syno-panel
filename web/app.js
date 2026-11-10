@@ -3,22 +3,6 @@ const diskList = $("#disk-list");
 const networkList = $("#network-list");
 const containerList = $("#container-list");
 const mobileList = $("#mobile-container-list");
-const themeOptions = [...document.querySelectorAll("[data-theme-option]")];
-
-function setTheme(theme) {
-  const selected = theme === "glass" ? "glass" : "cyberpunk";
-  document.documentElement.dataset.theme = selected;
-  for (const option of themeOptions) {
-    option.setAttribute("aria-pressed", String(option.dataset.themeOption === selected));
-  }
-  localStorage.setItem("nas-panel-theme", selected);
-}
-
-const savedTheme = localStorage.getItem("nas-panel-theme");
-setTheme(savedTheme === "glass" ? "glass" : "cyberpunk");
-for (const option of themeOptions) {
-  option.addEventListener("click", () => setTheme(option.dataset.themeOption));
-}
 
 function bytes(value) {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
