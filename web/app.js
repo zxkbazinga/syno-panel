@@ -46,7 +46,7 @@ function renderDisks(disks) {
     const usage = Number(disk.usedPercent) || 0;
     return `<article class="disk-card">
       <div class="disk-top">
-        <div class="disk-name"><span class="disk-icon">▤</span><div><div class="disk-label">${safeText(disk.name)} <span style="color:var(--faint)">· ${safeText(disk.fileSystem)}</span></div><div class="disk-mount">${safeText(disk.mount)}</div></div></div>
+        <div class="disk-name"><span class="disk-icon">▤</span><div><div class="disk-label">${safeText(disk.name || disk.mount)} <span style="color:var(--faint)">· ${safeText(disk.fileSystem)}</span></div></div></div>
         <span class="disk-percent">${percent(usage)}</span>
       </div>
       <div class="progress-track"><div class="progress-fill ${progressClass(usage)}" style="width:${Math.min(usage, 100)}%"></div></div>

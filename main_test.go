@@ -80,6 +80,28 @@ func TestIsNASVolumeMount(t *testing.T) {
 	}
 }
 
+func TestReadDisksUsesMountPathAsDisplayName(t *testing.T) {
+	root := t.TempDir()
+	proc := filepath.Join(t.TempDir(), "proc")
+	if err := os.MkdirAll(filepath.Join(root, "volume1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(proc, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proc, "mounts"), []byte("/dev/cachedev_0 /volume1 btrfs rw 0 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	disks, warnings := (&Collector{hostRoot: root, hostProc: proc}).readDisks()
+	if len(warnings) != 0 {
+		t.Fatalf("readDisks() warnings = %v", warnings)
+	}
+	if len(disks) != 1 || disks[0].Name != "/volume1" {
+		t.Fatalf("readDisks() = %+v, want display name /volume1", disks)
+	}
+}
+
 func TestParseNetworkStats(t *testing.T) {
 	got, err := parseNetworkStats("Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n  lo: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n eth0: 1000 2 0 0 0 0 0 0 2000 3 0 0 0 0 0 0\n docker0: 3000 0 0 0 0 0 0 0 4000 0 0 0 0 0 0 0\n bond0: 5000 4 0 0 0 0 0 0 6000 5 0 0 0 0 0 0\n")
 	if err != nil {

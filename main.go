@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -367,7 +366,7 @@ func (c *Collector) readDisks() ([]Disk, []string) {
 		}
 		used := total - free
 		disks = append(disks, Disk{
-			Name:        filepathBase(mount.device),
+			Name:        mount.mount,
 			Mount:       mount.mount,
 			FileSystem:  mount.fsType,
 			UsedBytes:   used,
@@ -867,8 +866,4 @@ func subtractFloor(a, b uint64) uint64 {
 		return 0
 	}
 	return a - b
-}
-
-func filepathBase(value string) string {
-	return path.Base(strings.TrimSuffix(value, "/"))
 }
