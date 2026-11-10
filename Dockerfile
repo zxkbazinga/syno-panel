@@ -9,6 +9,7 @@ COPY web ./web
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${APP_VERSION}" -o /nas-panel .
 
 FROM alpine:3.20
+LABEL org.opencontainers.image.vendor="zzbazinga"
 WORKDIR /app
 COPY --from=build /nas-panel /usr/local/bin/nas-panel
 USER 0:0
