@@ -2,17 +2,94 @@
 
 一个面向群晖 NAS 的轻量级 Docker 资源看板。使用 Go 标准库构建，无需账号登录或额外服务；浏览器通过 SSE 接收服务端推送，Docker 容器资源直接使用 Docker Stats 持续流，主机 CPU、内存和网络指标约每秒采样，界面适配手机和桌面屏幕。
 
-## 部署
+## 部署教程
 
-在已安装 Container Manager（或 Docker）的群晖上，将本项目放到 NAS 后，在项目目录执行：
+以下示例在已安装 Container Manager（或 Docker）的群晖 x86_64 机型上使用，镜像取自 GHCR。看板不提供登录，请仅在局域网内使用。
 
-```sh
-docker compose up -d --build
+### 准备
+
+按你的 NAS 实际存储卷调整挂载：`/volume1`、`/volume2` 是群晖默认数据卷，若有更多卷（如 `/volume3`），在 `volumes` 中照格式添加。Docker Socket 默认在 `/var/run/docker.sock`，若你的群晖路径不同，需同步修改挂载和 `DOCKER_SOCKET`。
+
+### 方式一：Docker Compose（推荐）
+
+在群晖上新建目录（如 `/volume1/docker/syno-panel`），创建 `compose.yaml`：
+
+```yaml
+services:
+  syno-panel:
+    image: ghcr.io/zxkbazinga/syno-panel:v0.1.8
+    container_name: syno-panel
+    restart: unless-stopped
+    ports:
+      - "5666:5666"
+    environment:
+      PORT: "5666"
+      DOCKER_SOCKET: /var/run/docker.sock
+      HOST_ROOT: /host
+      HOST_PROC: /host/proc
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /volume1:/host/volume1:ro
+      - /volume2:/host/volume2:ro
+      - /proc:/host/proc:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 ```
 
-然后在浏览器访问 `http://群晖IP:5666`。也可以在 Container Manager 中通过 `compose.yaml` 创建项目。
+在该目录执行：
+
+```sh
+docker compose pull          # 拉取镜像
+docker compose up -d         # 启动容器
+docker compose logs -f       # 查看日志，Ctrl+C 退出
+```
+
+日常更新镜像并重启：
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+停止并移除容器用 `docker compose down`。也可以在 Container Manager 中导入这份 `compose.yaml` 创建项目。镜像标签可换成 `:latest` 或其他版本，换取持续更新或固定版本。
+
+### 方式二：docker run
+
+不想用 compose 文件时，用等价的 `docker run` 命令：
+
+```sh
+docker run -d \
+  --name syno-panel \
+  --restart unless-stopped \
+  -p 5666:5666 \
+  -e PORT=5666 \
+  -e DOCKER_SOCKET=/var/run/docker.sock \
+  -e HOST_ROOT=/host \
+  -e HOST_PROC=/host/proc \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /volume1:/host/volume1:ro \
+  -v /volume2:/host/volume2:ro \
+  -v /proc:/host/proc:ro \
+  --read-only \
+  --tmpfs /tmp:size=16m,noexec,nosuid \
+  --cap-drop ALL \
+  --security-opt no-new-privileges:true \
+  ghcr.io/zxkbazinga/syno-panel:v0.1.8
+```
+
+查看日志 `docker logs -f syno-panel`，停止 `docker stop syno-panel`。更新时先执行 `docker stop syno-panel && docker rm syno-panel`，改好镜像标签后重新运行上面的命令。
+
+### 访问
+
+浏览器打开 `http://群晖IP:5666` 即可看到看板。若无法访问，检查容器是否在运行（`docker ps -a | grep syno-panel`）及日志有无报错。
 
 ## 使用已构建的 x86_64 镜像
+
+若群晖无法访问 GHCR，可改用离线镜像包部署（而非上面的在线拉取方式）。
 
 如果使用预先构建的镜像包，将 `syno-panel-amd64.tar` 上传到群晖并导入 Container Manager，或通过 SSH 执行：
 
