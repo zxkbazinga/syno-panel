@@ -122,15 +122,15 @@ function containerMarkup(container) {
 }
 
 function renderContainers(containers) {
-  const running = containers.filter((container) => /^Up\b/i.test(container.status)).length;
+  const running = containers.filter((container) => container.running).length;
   $("#container-count").innerHTML = `${containers.length}<small> 个</small>`;
   $("#running-count").textContent = `${running} / ${containers.length}`;
   $("#container-summary").textContent = containers.length
-    ? `${running} 个容器正在运行`
-    : "当前没有运行中的容器";
+    ? `${running} 个容器正在运行${containers.length > running ? ` · ${containers.length - running} 个已停止` : ""}`
+    : "当前没有容器";
   if (!containers.length) {
-    containerList.innerHTML = '<tr><td colspan="6"><div class="empty-state"><span class="empty-icon">◌</span><span>暂无运行中的容器</span></div></td></tr>';
-    mobileList.innerHTML = '<div class="empty-state"><span class="empty-icon">◌</span><span>暂无运行中的容器</span></div>';
+    containerList.innerHTML = '<tr><td colspan="6"><div class="empty-state"><span class="empty-icon">◌</span><span>暂无容器</span></div></td></tr>';
+    mobileList.innerHTML = '<div class="empty-state"><span class="empty-icon">◌</span><span>暂无容器</span></div>';
     return;
   }
   const rows = containers.map(containerMarkup);

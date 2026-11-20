@@ -72,6 +72,7 @@ type Container struct {
 	Name          string  `json:"name"`
 	Image         string  `json:"image"`
 	Status        string  `json:"status"`
+	Running       bool    `json:"running"`
 	CPUPercent    float64 `json:"cpuPercent"`
 	MemoryBytes   uint64  `json:"memoryBytes"`
 	MemoryLimit   uint64  `json:"memoryLimit"`
@@ -522,11 +523,13 @@ func (c *Collector) runContainerMonitor(ctx context.Context, stream *hub) {
 		running := make(map[string]struct{}, len(listed))
 		containers := make([]Container, 0, len(listed))
 		for _, item := range listed {
+			// 所有状态的容器都纳入列表（含已停止/创建/异常等），保证数量与 docker ps -a 一致
+			containers = append(containers, containerFromList(item))
 			if item.State != "running" {
 				continue
 			}
+			// 仅运行中的容器才拉取实时 stats，停止容器保留零指标与状态文本
 			running[item.ID] = struct{}{}
-			containers = append(containers, containerFromList(item))
 			if _, exists := active[item.ID]; !exists {
 				containerCtx, cancel := context.WithCancel(ctx)
 				active[item.ID] = cancel
@@ -561,7 +564,7 @@ func (c *Collector) runContainerMonitor(ctx context.Context, stream *hub) {
 func (c *Collector) listContainers(ctx context.Context) ([]dockerContainer, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://docker/v1.41/containers/json", nil)
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://docker/v1.41/containers/json?all=1", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -587,10 +590,11 @@ func containerFromList(item dockerContainer) Container {
 		name = item.ID[:min(12, len(item.ID))]
 	}
 	return Container{
-		ID:     item.ID[:min(12, len(item.ID))],
-		Name:   name,
-		Image:  item.Image,
-		Status: item.Status,
+		ID:      item.ID[:min(12, len(item.ID))],
+		Name:    name,
+		Image:   item.Image,
+		Status:  item.Status,
+		Running: item.State == "running",
 	}
 }
 
@@ -722,13 +726,16 @@ func (h *hub) setContainers(containers []Container) {
 		previous[container.ID] = container
 	}
 	for index, container := range containers {
-		if old, exists := previous[container.ID]; exists {
-			container.CPUPercent = old.CPUPercent
-			container.MemoryBytes = old.MemoryBytes
-			container.MemoryLimit = old.MemoryLimit
-			container.MemoryPercent = old.MemoryPercent
-			container.NetworkBytes = old.NetworkBytes
-			container.BlockBytes = old.BlockBytes
+		// 仅运行中的容器继承上一次的实时指标；停止容器保留零值，避免显示过期数据
+		if container.Running {
+			if old, exists := previous[container.ID]; exists && old.Running {
+				container.CPUPercent = old.CPUPercent
+				container.MemoryBytes = old.MemoryBytes
+				container.MemoryLimit = old.MemoryLimit
+				container.MemoryPercent = old.MemoryPercent
+				container.NetworkBytes = old.NetworkBytes
+				container.BlockBytes = old.BlockBytes
+			}
 		}
 		containers[index] = container
 	}
