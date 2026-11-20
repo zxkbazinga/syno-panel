@@ -31,9 +31,9 @@ SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest docker compose -f com
 
 登录时按提示输入 Zot 用户名和密码，不要将凭据写入 Compose 文件。HTTPS 证书需由 Ubuntu、群晖上的 Docker 信任；若使用自签名证书，请先将 CA 证书安装到对应主机的 Docker 信任目录。
 
-## 使用 Gitea act_runner 构建并推送到 Zot
+## 使用 GitHub Actions 构建并推送到 Zot
 
-仓库中的 `.gitea/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 Zot。每次构建都会更新 `latest` 并发布以提交 SHA 命名的不可变镜像标签；符合 Conventional Commits 的版本更新还会发布 SemVer 镜像标签并创建对应的 Git 标签（格式 `v主版本.次版本.补丁版本`）。页面底部会显示镜像构建时注入的版本号。
+仓库中的 `.github/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，使用 GitHub 托管的 `ubuntu-latest` runner 构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 Zot。每次构建都会更新 `latest` 并发布以提交 SHA 命名的不可变镜像标签；符合 Conventional Commits 的版本更新还会发布 SemVer 镜像标签并创建对应的 Git 标签（格式 `v主版本.次版本.补丁版本`）。页面底部会显示镜像构建时注入的版本号。
 
 镜像包含 OCI `org.opencontainers.image.vendor` 元数据，仓库界面可据此显示发布者 `zzbazinga`。更新 Dockerfile 后需重新构建并推送镜像，已有镜像标签不会自动补上该元数据。
 
@@ -47,12 +47,13 @@ SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest docker compose -f com
 
 例如推送 `feat: add disk alerts` 后发布 `v0.2.0` 和 `latest`；推送 `fix: correct memory usage` 后发布 `v0.2.1`。部署时可以固定镜像版本（如 `syno-panel:v0.2.1`），或使用持续更新的 `syno-panel:latest`。
 
-在 Gitea 仓库的 **Settings → Actions → Secrets** 中添加：
+在 GitHub 仓库的 **Settings → Secrets and variables → Actions** 中添加：
 
 - `ZOT_USERNAME`：Zot 用户名。
 - `ZOT_PASSWORD`：Zot 密码或访问令牌。
+- `ZOT_CA_CERT`（可选）：Zot 的 HTTPS CA 证书（PEM 全文）。若 Zot 使用自签名证书，必须添加此项；工作流会将其写入 runner 的 Docker 证书目录。若证书已由公共 CA 签发则可省略。
 
-工作流使用 `runs-on: ubuntu-latest`，对应 act_runner 注册标签 `ubuntu-latest:host`，步骤直接在 Ubuntu 宿主机执行。宿主机需预装 Git、Docker CLI 和 Node.js 20（供 `actions/checkout` 使用）；运行 act_runner 的系统用户需有权访问 Docker daemon（通常将该用户加入 `docker` 组），且 Docker daemon 必须信任 Zot 的 HTTPS 证书。工作流不会创建 job 容器，也不会安装 Docker。
+工作流使用 GitHub 托管 runner，`ubuntu-latest` 已预装 Git 和 Docker，无需自托管 runner 或额外环境。`contents: write` 权限允许在版本更新时把 Git 标签推回仓库。
 
 成功后，在群晖上执行 `docker login zot.zzbazinga.site:8888`，再用 `SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest` 配合 `compose.image.yaml` 拉取并部署镜像。
 

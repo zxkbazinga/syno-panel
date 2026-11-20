@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: publish-syno-panel-main
   cancel-in-progress: false
@@ -18,20 +21,29 @@ jobs:
       ZOT_IMAGE: syno-panel
     steps:
       - name: Check out source
-        uses: builtin:checkout
+        uses: actions/checkout@v4
         with:
-         fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Check host Docker access
-        run: docker version
+      - name: Trust Zot CA certificate
+        env:
+          ZOT_CA_CERT: ${{ secrets.ZOT_CA_CERT }}
+        run: |
+          if [ -z "$ZOT_CA_CERT" ]; then
+            echo "No ZOT_CA_CERT secret set; skipping custom CA installation."
+            exit 0
+          fi
+          sudo mkdir -p "/etc/docker/certs.d/$ZOT_REGISTRY"
+          printf '%s\n' "$ZOT_CA_CERT" |
+            sudo tee "/etc/docker/certs.d/$ZOT_REGISTRY/ca.crt" > /dev/null
+          echo "Installed Zot CA certificate."
 
       - name: Calculate semantic version
         id: version
         shell: bash
         run: |
-          git fetch origin --tags
-          git config user.name "Gitea Actions"
-          git config user.email "gitea-actions@localhost"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           latest_tag="$(git for-each-ref \
             --format='%(refname:short)' \
