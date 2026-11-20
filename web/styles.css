@@ -315,8 +315,10 @@ h1 { margin: 0; font-size: clamp(29px, 4vw, 40px); font-weight: 600; letter-spac
 h2 { margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -.4px; }
 .section-count { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font: 10px var(--mono); }
 .tiny-pulse { width: 5px; height: 5px; }
-.disk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.network-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.disk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(50% - 6px), 1fr)); gap: 12px; }
+.network-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(50% - 6px), 1fr)); gap: 12px; }
+.disk-grid > :last-child:nth-child(odd),
+.network-grid > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 .network-card {
   min-width: 0;
   padding: 16px 18px;

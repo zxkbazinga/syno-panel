@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -237,5 +241,76 @@ func TestServeVersion(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+type captureTransport struct {
+	requestURL string
+	body       string
+}
+
+func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.requestURL = req.URL.String()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(t.body)),
+		Header:     make(http.Header),
+	}, nil
+}
+
+func TestListContainersRequestsAllStates(t *testing.T) {
+	transport := &captureTransport{body: `[]`}
+	collector := &Collector{docker: &http.Client{Transport: transport}}
+	if _, err := collector.listContainers(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(transport.requestURL, "all=1") {
+		t.Fatalf("listContainers URL = %q, want all=1 query to include stopped containers", transport.requestURL)
+	}
+}
+
+func TestContainerFromListRunningState(t *testing.T) {
+	item := dockerContainer{
+		ID:     "abcdef1234567890",
+		Names:  []string{"/web"},
+		Image:  "nginx:latest",
+		State:  "exited",
+		Status: "Exited (0) 2 hours ago",
+	}
+	stopped := containerFromList(item)
+	if stopped.Running {
+		t.Fatal("exited container should not be marked running")
+	}
+	if stopped.Status != "Exited (0) 2 hours ago" || stopped.Name != "web" {
+		t.Fatalf("stopped container = %+v, want preserved status and name", stopped)
+	}
+
+	item.State = "running"
+	item.Status = "Up 5 seconds"
+	running := containerFromList(item)
+	if !running.Running {
+		t.Fatal("running container should be marked running")
+	}
+}
+
+func TestSetContainersClearsMetricsForStoppedContainers(t *testing.T) {
+	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
+	stream.setContainers([]Container{{ID: "abc", Name: "web", Running: true, CPUPercent: 42, MemoryBytes: 1000, MemoryLimit: 4000}})
+	// 容器停止后重新上报，指标字段为零值，不应继承运行时的旧数据
+	stream.setContainers([]Container{{ID: "abc", Name: "web", Running: false, Status: "Exited (0)"}})
+	got := stream.latest.Containers[0]
+	if got.CPUPercent != 0 || got.MemoryBytes != 0 || got.MemoryLimit != 0 {
+		t.Fatalf("stopped container retained stale metrics: %+v", got)
+	}
+}
+
+func TestSetContainersPreservesMetricsForRunningContainers(t *testing.T) {
+	stream := &hub{subscribers: make(map[chan Snapshot]struct{})}
+	stream.setContainers([]Container{{ID: "abc", Name: "web", Running: true, CPUPercent: 42, MemoryBytes: 1000}})
+	// 运行中的容器在刷新间隔内仍继承上一次的实时指标，避免数据抖动归零
+	stream.setContainers([]Container{{ID: "abc", Name: "web", Running: true, Status: "Up 6 seconds"}})
+	got := stream.latest.Containers[0]
+	if got.CPUPercent != 42 || got.MemoryBytes != 1000 {
+		t.Fatalf("running container lost live metrics: %+v", got)
 	}
 }
