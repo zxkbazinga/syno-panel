@@ -1,4 +1,4 @@
-name: Publish NAS panel image
+name: Publish Syno Panel image
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: publish-nas-panel-main
+  group: publish-syno-panel-main
   cancel-in-progress: false
 
 jobs:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ZOT_REGISTRY: zot.zzbazinga.site:8888
-      ZOT_IMAGE: nas-panel
+      ZOT_IMAGE: syno-panel
     steps:
       - name: Check out source
         uses: builtin:checkout

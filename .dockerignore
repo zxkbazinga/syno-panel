@@ -4,8 +4,8 @@
 *.tar
 *.tar.gz
 *.zip
-nas-panel-deploy
-nas-panel-deploy.*
+syno-panel-deploy
+syno-panel-deploy.*
 README.md
 LICENSE
 main_test.go

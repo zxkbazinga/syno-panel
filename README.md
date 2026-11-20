@@ -1,4 +1,4 @@
-# Synology NAS Panel
+# Syno Panel
 
 一个面向群晖 NAS 的轻量级 Docker 资源看板。使用 Go 标准库构建，无需账号登录或额外服务；浏览器通过 SSE 接收服务端推送，Docker 容器资源直接使用 Docker Stats 持续流，主机 CPU、内存和网络指标约每秒采样，界面适配手机和桌面屏幕。
 
@@ -14,19 +14,19 @@ docker compose up -d --build
 
 ## 使用已构建的 x86_64 镜像
 
-如果使用预先构建的镜像包，将 `nas-panel-amd64.tar` 上传到群晖并导入 Container Manager，或通过 SSH 执行：
+如果使用预先构建的镜像包，将 `syno-panel-amd64.tar` 上传到群晖并导入 Container Manager，或通过 SSH 执行：
 
 ```sh
-docker load -i nas-panel-amd64.tar
+docker load -i syno-panel-amd64.tar
 docker compose -f compose.image.yaml up -d
 ```
 
-`compose.image.yaml` 默认使用已导入的 `nas-panel:latest`，不会在群晖上重新编译。若已推送到 Zot，可在群晖上先登录仓库，再使用仓库镜像部署：
+`compose.image.yaml` 默认使用已导入的 `syno-panel:latest`，不会在群晖上重新编译。若已推送到 Zot，可在群晖上先登录仓库，再使用仓库镜像部署：
 
 ```sh
 docker login zot.zzbazinga.site:8888
-NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest docker compose -f compose.image.yaml pull
-NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest docker compose -f compose.image.yaml up -d
+SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest docker compose -f compose.image.yaml pull
+SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest docker compose -f compose.image.yaml up -d
 ```
 
 登录时按提示输入 Zot 用户名和密码，不要将凭据写入 Compose 文件。HTTPS 证书需由 Ubuntu、群晖上的 Docker 信任；若使用自签名证书，请先将 CA 证书安装到对应主机的 Docker 信任目录。
@@ -45,7 +45,7 @@ NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest docker compose -f compo
 - 多种提交同时存在时，按主版本、次版本、补丁版本的优先顺序取最高升级级别。其他提交类型只更新 `latest` 和 SHA 标签，不创建新 SemVer 版本。
 - 第一次运行且仓库没有 `vX.Y.Z` 标签时，从 `v0.1.0` 开始。
 
-例如推送 `feat: add disk alerts` 后发布 `v0.2.0` 和 `latest`；推送 `fix: correct memory usage` 后发布 `v0.2.1`。部署时可以固定镜像版本（如 `nas-panel:v0.2.1`），或使用持续更新的 `nas-panel:latest`。
+例如推送 `feat: add disk alerts` 后发布 `v0.2.0` 和 `latest`；推送 `fix: correct memory usage` 后发布 `v0.2.1`。部署时可以固定镜像版本（如 `syno-panel:v0.2.1`），或使用持续更新的 `syno-panel:latest`。
 
 在 Gitea 仓库的 **Settings → Actions → Secrets** 中添加：
 
@@ -54,7 +54,7 @@ NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest docker compose -f compo
 
 工作流使用 `runs-on: ubuntu-latest`，对应 act_runner 注册标签 `ubuntu-latest:host`，步骤直接在 Ubuntu 宿主机执行。宿主机需预装 Git、Docker CLI 和 Node.js 20（供 `actions/checkout` 使用）；运行 act_runner 的系统用户需有权访问 Docker daemon（通常将该用户加入 `docker` 组），且 Docker daemon 必须信任 Zot 的 HTTPS 证书。工作流不会创建 job 容器，也不会安装 Docker。
 
-成功后，在群晖上执行 `docker login zot.zzbazinga.site:8888`，再用 `NAS_PANEL_IMAGE=zot.zzbazinga.site:8888/nas-panel:latest` 配合 `compose.image.yaml` 拉取并部署镜像。
+成功后，在群晖上执行 `docker login zot.zzbazinga.site:8888`，再用 `SYNO_PANEL_IMAGE=zot.zzbazinga.site:8888/syno-panel:latest` 配合 `compose.image.yaml` 拉取并部署镜像。
 
 看板读取：
 

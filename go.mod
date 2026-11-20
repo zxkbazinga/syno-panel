@@ -1,3 +1,3 @@
-module nas-panel
+module syno-panel
 
 go 1.22

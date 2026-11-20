@@ -1,7 +1,7 @@
 services:
-  nas-panel:
-    image: "${NAS_PANEL_IMAGE:-nas-panel:latest}"
-    container_name: nas-panel
+  syno-panel:
+    image: "${SYNO_PANEL_IMAGE:-syno-panel:latest}"
+    container_name: syno-panel
     restart: unless-stopped
     ports:
       - "5666:5666"

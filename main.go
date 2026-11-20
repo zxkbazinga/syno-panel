@@ -194,7 +194,7 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("NAS panel listening on :%s", port)
+	log.Printf("Syno Panel listening on :%s", port)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

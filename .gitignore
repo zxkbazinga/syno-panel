@@ -11,6 +11,6 @@
 
 # Built Visual Studio Code Extensions
 *.vsix
-nas-panel-amd64.tar
+syno-panel-amd64.tar
 
-nas-panel-deploy.tar.gz
+syno-panel-deploy.tar.gz

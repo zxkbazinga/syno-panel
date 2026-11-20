@@ -1,7 +1,7 @@
 services:
-  nas-panel:
+  syno-panel:
     build: .
-    container_name: nas-panel
+    container_name: syno-panel
     restart: unless-stopped
     ports:
       - "5666:5666"
