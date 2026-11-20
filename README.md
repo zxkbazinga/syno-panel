@@ -32,19 +32,19 @@ SYNO_PANEL_IMAGE=ghcr.io/zxkbazinga/syno-panel:latest docker compose -f compose.
 
 ## 使用 GitHub Actions 构建并推送到 GHCR
 
-仓库中的 `.github/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，使用 GitHub 托管的 `ubuntu-latest` runner 构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 GHCR（`ghcr.io/zxkbazinga/syno-panel`）。每次构建都会更新 `latest` 并发布以提交 SHA 命名的不可变镜像标签；符合 Conventional Commits 的版本更新还会发布 SemVer 镜像标签并创建对应的 Git 标签（格式 `v主版本.次版本.补丁版本`）。页面底部会显示镜像构建时注入的版本号。
+仓库中的 `.github/workflows/publish-image.yaml` 会在推送到 `main` 分支或手动触发时，使用 GitHub 托管的 `ubuntu-latest` runner 构建群晖 x86_64 使用的 `linux/amd64` 镜像并推送到 GHCR（`ghcr.io/zxkbazinga/syno-panel`）。每次构建都会发布一个 SemVer 版本标签（格式 `v主版本.次版本.补丁版本`）并同步更新 `latest`，同时创建对应的 Git 标签。页面底部会显示镜像构建时注入的版本号。
 
 镜像包含 OCI `org.opencontainers.image.vendor` 元数据，仓库界面可据此显示发布者 `zzbazinga`。更新 Dockerfile 后需重新构建并推送镜像，已有镜像标签不会自动补上该元数据。
 
-版本升级规则（统计自上一个 `vX.Y.Z` Git 标签之后的所有提交）：
+版本升级规则（统计自上一个 `vX.Y.Z` Git 标签之后的所有提交，**每次构建都会发版**）：
 
 - `feat:`：次版本号 +1，补丁号归零。
-- `fix:` 或 `perf:`：补丁号 +1。
 - `BREAKING CHANGE:` 正文，或 `feat!:`、`fix!:`、`perf!:`：主版本号 +1，次版本号和补丁号归零。
-- 多种提交同时存在时，按主版本、次版本、补丁版本的优先顺序取最高升级级别。其他提交类型只更新 `latest` 和 SHA 标签，不创建新 SemVer 版本。
+- 其他所有提交（含 `fix:`、`perf:`、`ci:`、`docs:`、`refactor:` 等）：补丁号 +1。
+- 多种提交同时存在时，按主版本、次版本、补丁版本的优先顺序取最高升级级别。
 - 第一次运行且仓库没有 `vX.Y.Z` 标签时，从 `v0.1.0` 开始。
 
-例如推送 `feat: add disk alerts` 后发布 `v0.2.0` 和 `latest`；推送 `fix: correct memory usage` 后发布 `v0.2.1`。部署时可以固定镜像版本（如 `ghcr.io/zxkbazinga/syno-panel:v0.2.1`），或使用持续更新的 `ghcr.io/zxkbazinga/syno-panel:latest`。
+例如当前最新为 `v0.1.7`，推送 `ci:` 提交后发布 `v0.1.8`；再推送 `feat: add disk alerts` 则发布 `v0.2.0`。部署时可以固定镜像版本（如 `ghcr.io/zxkbazinga/syno-panel:v0.1.8`），或使用持续更新的 `ghcr.io/zxkbazinga/syno-panel:latest`。
 
 工作流使用内置的 `GITHUB_TOKEN` 登录 GHCR，无需额外配置 Secrets。仓库需开启 **Settings → Actions → General → Workflow permissions** 中的 `Read and write permissions`（工作流已声明 `contents: write` 和 `packages: write`：前者用于把 Git 标签推回仓库，后者用于推送镜像）。`ubuntu-latest` 已预装 Git 和 Docker，无需自托管 runner。
 
