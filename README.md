@@ -191,17 +191,4 @@ git commit -m "feat: 新增某功能"
 git push -u origin feat/xxx
 ```
 
-随后在 GitHub 网页发起 Pull Request，目标分支选 `main`，评审通过后合并。合并产生的 `main` push 会触发构建并按提交类型自动发版。如果需要长期开发分支，可用 `git switch -c develop main && git push -u origin develop` 创建（同样不会触发构建）。
-
-### 开启分支保护（仓库管理员在网页操作）
-
-进入仓库 **Settings → Branches → Branch protection rules → Add branch protection rule**：
-
-1. Branch name pattern 填 `main`。
-2. 勾选 **Require a pull request before merging**，建议同时勾选 **Require approvals**（至少 1 人）。
-3. 按需勾选 **Require status checks to pass before merging**（若后续添加 CI 检查）。
-4. 勾选 **Do not allow bypassing the above settings**，必要时勾选 **Include administrators**。
-5. 取消勾选 **Allow force pushes** 与 **Allow deletions**。
-6. 点击 Create 保存。
-
-开启后直接 `git push origin main` 会被拒绝，只能通过 PR 合并。工作流用 `GITHUB_TOKEN` 推送的是 Git tag 而非分支，不受分支保护影响，发版照常工作。
+随后在 GitHub 网页发起 Pull Request，目标分支选 `main`，评审通过后合并。合并产生的 `main` push 会触发构建并按提交类型自动发版。如果需要长期开发分支，可用 `git switch -c dev main && git push -u origin dev` 创建（同样不会触发构建）。
