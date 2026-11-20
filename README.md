@@ -48,7 +48,7 @@ SYNO_PANEL_IMAGE=ghcr.io/zxkbazinga/syno-panel:latest docker compose -f compose.
 
 工作流使用内置的 `GITHUB_TOKEN` 登录 GHCR，无需额外配置 Secrets。仓库需开启 **Settings → Actions → General → Workflow permissions** 中的 `Read and write permissions`（工作流已声明 `contents: write` 和 `packages: write`：前者用于把 Git 标签推回仓库，后者用于推送镜像）。`ubuntu-latest` 已预装 Git 和 Docker，无需自托管 runner。
 
-镜像包的可见性默认为私有。若希望公开拉取，在 GitHub 仓库左侧 **Packages** 中找到 `syno-panel`，进入 **Package settings → Change visibility → Public**。
+容器镜像包在**用户账户下**而非仓库内：点右上角头像 → **Your profile → Packages**，或直接访问 `https://github.com/zxkbazinga/syno-panel/pkgs/container/syno-panel`。包的可见性默认为私有，若需公开匿名拉取，进入包页面 **Package settings → Change visibility → Public**。
 
 成功后，在群晖上用 `SYNO_PANEL_IMAGE=ghcr.io/zxkbazinga/syno-panel:latest` 配合 `compose.image.yaml` 拉取并部署镜像。
 
